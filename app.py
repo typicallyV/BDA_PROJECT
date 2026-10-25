@@ -1,4 +1,5 @@
 from pathlib import Path
+import os
 import gradio as gr
 import pandas as pd
 import re
@@ -53,9 +54,10 @@ def download_kaggle():
         raise gr.Error((result.stderr or result.stdout)[-1500:])
     return result.stdout[-2000:]
 
+READ_ONLY = os.getenv("GRADIO_READONLY", "false").lower() == "true"
 with gr.Blocks(title="Social Media Analytics | Spark + Hadoop + Cassandra") as demo:
-    gr.Markdown("# Social Media Analytics\n**Twitter + Reddit sentiment** · PySpark processing · Hadoop compatible storage · Cassandra archive")
-    gr.Markdown("Dataset: [Twitter and Reddit Sentimental Analysis](https://www.kaggle.com/datasets/cosmos98/twitter-and-reddit-sentimental-analysis-dataset) — roughly 200K labeled public posts/comments. Use Download Kaggle dataset once or place the CSVs in `data/kaggle_social/`.")
+    gr.Markdown("# Social Media Analytics\n**Twitter + Reddit sentiment** · PySpark processing · Hadoop-compatible storage · Cassandra archive")
+    gr.Markdown("Dataset: [Twitter and Reddit Sentimental Analysis](https://www.kaggle.com/datasets/cosmos98/twitter-and-reddit-sentimental-analysis-dataset) — roughly 200K labeled public posts/comments.")
     with gr.Row():
         total = gr.Number(label="Records", precision=0)
         platforms = gr.Number(label="Platforms", precision=0)
@@ -65,17 +67,23 @@ with gr.Blocks(title="Social Media Analytics | Spark + Hadoop + Cassandra") as d
         sentiment_plot = gr.Plot(label="Sentiment")
     topic_plot = gr.Plot(label="Topics (keyword-derived)")
     posts = gr.Dataframe(label="Sample analyzed posts", interactive=False, wrap=True)
-    upload = gr.File(label="Optional: add a CSV", file_types=[".csv"], type="filepath")
-    with gr.Row():
-        run = gr.Button("Run PySpark analysis", variant="primary")
-        fetch = gr.Button("Download Kaggle dataset")
-    log = gr.Textbox(label="Download status", lines=3)
-    run.click(analyze, inputs=[upload], outputs=[total, platforms, positive, platform_plot, sentiment_plot, topic_plot, posts, upload])
-    fetch.click(download_kaggle, outputs=log)
-
+    analysis_outputs = [total, platforms, positive, platform_plot, sentiment_plot, topic_plot, posts]
+    if READ_ONLY:
+        gr.Markdown("Read-only public demo")
+        refresh = gr.Button("Refresh dashboard", variant="primary")
+        refresh.click(analyze, inputs=[], outputs=analysis_outputs)
+    else:
+        upload = gr.File(label="Optional: add a CSV", file_types=[".csv"], type="filepath")
+        with gr.Row():
+            run = gr.Button("Run PySpark analysis", variant="primary")
+            fetch = gr.Button("Download Kaggle dataset")
+        log = gr.Textbox(label="Download status", lines=3)
+        run.click(analyze, inputs=[upload], outputs=analysis_outputs + [upload])
+        fetch.click(download_kaggle, outputs=log)
 if __name__ == "__main__":
-    import os
     demo.launch(server_name="0.0.0.0", server_port=7860, show_error=True, share=os.getenv("GRADIO_SHARE", "false").lower() == "true", theme=gr.themes.Soft())
+
+
 
 
 
