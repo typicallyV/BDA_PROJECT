@@ -1,0 +1,10 @@
+*.py[cod]
+__pycache__/
+.venv/
+vendor/
+data/
+output/
+hadoop_data/
+hadoop_conf/
+hadoop_input/
+.git/

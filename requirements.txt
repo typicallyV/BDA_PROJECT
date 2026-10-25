@@ -1,0 +1,9 @@
+gradio>=6.0,<7
+pandas>=2.0,<4
+plotly>=5.20,<7
+pyspark==3.5.8
+cassandra-driver>=3.29,<4
+kaggle>=1.6,<2
+
+pyasyncore>=1.0.5; python_version >= '3.12'
+

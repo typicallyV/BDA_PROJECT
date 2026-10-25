@@ -1,0 +1,11 @@
+.venv/
+vendor/
+__pycache__/
+*.py[cod]
+.kaggle/
+data/*.csv
+data/kaggle_social/
+output/
+hadoop_data/
+hadoop_conf/
+hadoop_input/
