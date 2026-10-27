@@ -3,12 +3,29 @@ import os
 import gradio as gr
 import pandas as pd
 import re
-import plotly.express as px
+from html import escape
 from pipeline import run_pipeline, load_results, load_summary
 
 BASE = Path(__file__).resolve().parent
 DATA_DIR = BASE / "data" / "kaggle_social"
 OUTPUT_DIR = BASE / "output"
+
+
+def _text_bars(summary, column, title, limit=8):
+    """Render a small chart as plain Markdown, avoiding browser chart plugins."""
+    if summary is None or summary.empty or column not in summary.columns:
+        return f"### {title}\n\n_No data yet. Upload a CSV and run the analysis._"
+    counts = (summary.groupby(column, dropna=False)["posts"].sum()
+              .sort_values(ascending=False).head(limit))
+    if counts.empty:
+        return f"### {title}\n\n_No data to display._"
+    maximum = max(int(counts.max()), 1)
+    rows = [f"### {title}", ""]
+    for label, count in counts.items():
+        label = "Unknown" if pd.isna(label) else str(label)
+        bar = "█" * max(1, round(24 * int(count) / maximum))
+        rows.append(f"**{escape(label)}**  {bar} {int(count):,}")
+    return "\n\n".join(rows)
 
 
 def _is_supported_csv(path):
@@ -43,16 +60,17 @@ def analyze(uploaded_file=None):
             status = f"Analyzed {len(source_files)} CSV file(s) from the dataset folder."
         else:
             empty = pd.DataFrame(columns=["platform", "sentiment", "topic", "text"])
-            outputs = (0, 0, "0%", None, None, None, empty,
+            no_data = "### Waiting for data\n\nUpload a CSV below, then run the analysis."
+            outputs = (0, 0, "0%", no_data, no_data, no_data, empty,
                        "No dataset loaded yet. Upload a CSV below and click Run PySpark analysis, or download the Kaggle dataset first.")
             return outputs if READ_ONLY else (*outputs, None)
 
     frame = load_results()
     if frame.empty:
         raise gr.Error("No posts were found in that CSV. Check that its text and sentiment columns contain data.")
-    platform_chart = px.bar(summary.groupby("platform", as_index=False)["posts"].sum(), x="platform", y="posts", color="platform", title="Posts by platform")
-    sentiment_chart = px.bar(summary.groupby("sentiment", as_index=False)["posts"].sum(), x="sentiment", y="posts", color="sentiment", title="Sentiment distribution")
-    topic_chart = px.bar(summary.groupby("topic", as_index=False)["posts"].sum(), x="topic", y="posts", color="topic", title="Most discussed topics")
+    platform_chart = _text_bars(summary, "platform", "Platform mix")
+    sentiment_chart = _text_bars(summary, "sentiment", "Sentiment distribution")
+    topic_chart = _text_bars(summary, "topic", "Topics (keyword-derived)")
     top = frame[["platform", "sentiment", "topic", "text"]].head(100)
     outputs = (
         len(frame), frame["platform"].nunique(),
@@ -61,6 +79,8 @@ def analyze(uploaded_file=None):
         f"{status}. Processed {len(frame):,} post(s)."
     )
     return outputs if READ_ONLY else (*outputs, None)
+
+
 def download_kaggle():
     import subprocess, sys
     result = subprocess.run([sys.executable, str(BASE / "download_dataset.py")], cwd=str(BASE), capture_output=True, text=True)
@@ -77,9 +97,9 @@ with gr.Blocks(title="Social Media Analytics | Spark + Hadoop + Cassandra") as d
         platforms = gr.Number(label="Platforms", precision=0)
         positive = gr.Textbox(label="Positive posts")
     with gr.Row():
-        platform_plot = gr.Plot(label="Platform mix")
-        sentiment_plot = gr.Plot(label="Sentiment")
-    topic_plot = gr.Plot(label="Topics (keyword-derived)")
+        platform_plot = gr.Markdown("### Platform mix\n\nWaiting for data.")
+        sentiment_plot = gr.Markdown("### Sentiment distribution\n\nWaiting for data.")
+    topic_plot = gr.Markdown("### Topics (keyword-derived)\n\nWaiting for data.")
     posts = gr.Dataframe(label="Sample analyzed posts", interactive=False, wrap=True)
     status = gr.Markdown("Upload a supported CSV to begin, or download the Kaggle dataset.")
     analysis_outputs = [total, platforms, positive, platform_plot, sentiment_plot, topic_plot, posts, status]
@@ -98,15 +118,6 @@ with gr.Blocks(title="Social Media Analytics | Spark + Hadoop + Cassandra") as d
         run.click(analyze, inputs=[upload], outputs=analysis_outputs + [upload])
         fetch.click(download_kaggle, outputs=log)
         demo.load(analyze, inputs=[], outputs=analysis_outputs + [upload])
+
 if __name__ == "__main__":
     demo.launch(server_name="0.0.0.0", server_port=7860, show_error=True, share=os.getenv("GRADIO_SHARE", "false").lower() == "true", theme=gr.themes.Soft())
-
-
-
-
-
-
-
-
-
-
