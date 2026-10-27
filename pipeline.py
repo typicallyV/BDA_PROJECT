@@ -8,8 +8,8 @@ BASE = Path(__file__).resolve().parent
 DATA_DIR = BASE / "data" / "kaggle_social"
 OUTPUT_DIR = BASE / "output"
 
-TEXT_NAMES = ("clean_text", "clean_comment", "text", "comment", "tweet", "content", "post")
-LABEL_NAMES = ("category", "sentiment", "label", "polarity")
+TEXT_NAMES = ("clean_text", "clean_comment", "text", "comment", "tweet", "content", "post", "post_text", "tweet_text", "message", "body", "caption", "description", "full_text", "status", "review", "post_content", "tweet_content")
+LABEL_NAMES = ("category", "sentiment", "label", "polarity", "emotion", "class", "target", "sentiment_label", "sentiment_class", "rating")
 TOPICS = {
     "Politics": ("government", "election", "minister", "modi", "politic", "vote", "leader"),
     "Technology": ("technology", "tech", "phone", "app", "internet", "software", "ai"),
@@ -21,15 +21,27 @@ TOPICS = {
 
 
 def _normalized(name):
-    return re.sub(r"[^a-z0-9]+", "", name.lower())
+    return re.sub(r"[^a-z0-9]+", "", str(name).lower())
+
+
+def detect_columns(columns):
+    """Find post text and sentiment fields by common names or clear name tokens."""
+    lookup = {_normalized(name): str(name) for name in columns}
+    text_col = next((lookup[_normalized(name)] for name in TEXT_NAMES if _normalized(name) in lookup), None)
+    label_col = next((lookup[_normalized(name)] for name in LABEL_NAMES if _normalized(name) in lookup), None)
+    if text_col is None:
+        tokens = ("text", "tweet", "post", "comment", "content", "message", "caption", "body", "description")
+        text_col = next((name for normalized, name in lookup.items() if any(token in normalized for token in tokens)), None)
+    if label_col is None:
+        tokens = ("sentiment", "category", "label", "polarity", "emotion", "class", "target", "rating")
+        label_col = next((name for normalized, name in lookup.items() if any(token in normalized for token in tokens)), None)
+    return text_col, label_col
 
 
 def _topic(text):
     text = (text or "").lower()
     for topic, words in TOPICS.items():
-        if topic == "Other":
-            continue
-        if any(word in text for word in words):
+        if topic != "Other" and any(word in text for word in words):
             return topic
     return "Other"
 
@@ -46,13 +58,17 @@ def _sentiment(value):
 
 
 def spark_session():
-    # Keep Windows Spark workers on the same interpreter as this process.
+    """Create a conservative local Spark session for small hosted containers."""
     os.environ["PYSPARK_PYTHON"] = sys.executable
     os.environ["PYSPARK_DRIVER_PYTHON"] = sys.executable
     builder = (SparkSession.builder.appName("SocialMediaSentimentAnalysis")
-               .master(os.getenv("SPARK_MASTER", "local[*]"))
+               .master(os.getenv("SPARK_MASTER", "local[1]"))
+               .config("spark.driver.host", os.getenv("SPARK_DRIVER_HOST", "127.0.0.1"))
+               .config("spark.driver.bindAddress", os.getenv("SPARK_DRIVER_BIND_ADDRESS", "127.0.0.1"))
+               .config("spark.ui.enabled", "false")
+               .config("spark.default.parallelism", os.getenv("SPARK_DEFAULT_PARALLELISM", "1"))
                .config("spark.pyspark.python", sys.executable)
-               .config("spark.sql.shuffle.partitions", os.getenv("SPARK_SHUFFLE_PARTITIONS", "8")))
+               .config("spark.sql.shuffle.partitions", os.getenv("SPARK_SHUFFLE_PARTITIONS", "2")))
     cassandra_host = os.getenv("CASSANDRA_HOST")
     if cassandra_host:
         builder = builder.config("spark.cassandra.connection.host", cassandra_host)
@@ -60,18 +76,16 @@ def spark_session():
 
 
 def run_pipeline(input_files=None):
-    """Normalize the two Kaggle CSVs, analyze with Spark, and persist outputs."""
+    """Normalize CSVs, analyze with Spark, and persist outputs."""
     files = [Path(path).resolve() for path in input_files] if input_files is not None else sorted(DATA_DIR.glob("*.csv"))
     if not files:
-        raise FileNotFoundError("No Kaggle CSVs found under data/kaggle_social. Run download_dataset.py first.")
+        raise FileNotFoundError("No CSV files provided or found under data/kaggle_social.")
     spark = spark_session()
     try:
         normalized = []
         for path in files:
             raw = spark.read.option("header", True).option("inferSchema", True).option("multiLine", True).csv(path.resolve().as_uri())
-            columns = {_normalized(c): c for c in raw.columns}
-            text_col = next((columns[_normalized(n)] for n in TEXT_NAMES if _normalized(n) in columns), None)
-            label_col = next((columns[_normalized(n)] for n in LABEL_NAMES if _normalized(n) in columns), None)
+            text_col, label_col = detect_columns(raw.columns)
             if not text_col or not label_col:
                 print("Skipping CSV without supported text and sentiment columns:", path.name)
                 continue
@@ -80,11 +94,10 @@ def run_pipeline(input_files=None):
             rows = rows.withColumn("platform", F.lit(platform))
             normalized.append(rows)
         if not normalized:
-            raise ValueError("No CSV files with supported post-text and sentiment columns were found in " + str(DATA_DIR))
+            raise ValueError("No CSV files with supported post-text and sentiment columns were found.")
         data = normalized[0]
         for other in normalized[1:]:
             data = data.unionByName(other)
-        # Keep normalization in Spark SQL expressions so Windows needs no Python UDF workers.
         raw_label = F.lower(F.trim(F.col("raw_sentiment")))
         text_lower = F.lower(F.col("text"))
         sentiment_expr = (F.when(raw_label.isin("-1", "-1.0", "negative", "neg"), "Negative")
@@ -104,12 +117,10 @@ def run_pipeline(input_files=None):
         data.write.mode("overwrite").option("header", True).csv((OUTPUT_DIR / "spark_posts").resolve().as_uri())
         summary = data.groupBy("platform", "sentiment", "topic").count().withColumnRenamed("count", "posts")
         summary.write.mode("overwrite").option("header", True).csv((OUTPUT_DIR / "spark_summary").resolve().as_uri())
-        # Optional HDFS output: set HDFS_URI (e.g. hdfs://localhost:9000).
         hdfs_uri = os.getenv("HDFS_URI")
         if hdfs_uri:
             data.write.mode("overwrite").parquet(hdfs_uri.rstrip("/") + "/social-media/processed")
             summary.write.mode("overwrite").parquet(hdfs_uri.rstrip("/") + "/social-media/summary")
-        # Cassandra is an optional archive. The driver is created by SETUP_CASSANDRA.cmd.
         if os.getenv("CASSANDRA_HOST"):
             from cassandra.cluster import Cluster
             from cassandra.query import BatchStatement, ConsistencyLevel
@@ -120,8 +131,7 @@ def run_pipeline(input_files=None):
                 batch = BatchStatement(consistency_level=ConsistencyLevel.QUORUM)
                 batch_count = 0
                 for i, row in enumerate(data.select("platform", "sentiment", "topic", "text").toLocalIterator()):
-                    post_id = str(i)
-                    batch.add(insert, (post_id, row.platform, row.sentiment, row.topic, row.text[:4000]))
+                    batch.add(insert, (str(i), row.platform, row.sentiment, row.topic, row.text[:4000]))
                     batch_count += 1
                     if batch_count >= 50:
                         session.execute(batch)
@@ -149,14 +159,6 @@ def load_results():
     return pd.concat([pd.read_csv(p) for p in parts], ignore_index=True) if parts else pd.DataFrame(columns=["text", "raw_sentiment", "platform", "sentiment", "topic"])
 
 
-
-
-
-
-
-
 def load_summary():
     """Read the previously generated Spark summary without rerunning Spark."""
     return _read_spark_csv(OUTPUT_DIR / "spark_summary")
-
-
