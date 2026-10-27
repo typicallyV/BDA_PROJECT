@@ -8,6 +8,16 @@ from pipeline import run_pipeline, load_results, load_summary, detect_columns
 BASE = Path(__file__).resolve().parent
 DATA_DIR = BASE / "data" / "kaggle_social"
 OUTPUT_DIR = BASE / "output"
+SAMPLE_POSTS = (
+    ("This new phone app is fast and easy to use", "positive", "Positive", "Technology"),
+    ("The election results sparked a long debate online", "negative", "Negative", "Politics"),
+    ("The cricket team played a close match yesterday", "neutral", "Neutral", "Sports"),
+    ("I love the music and performances in this movie", "positive", "Positive", "Entertainment"),
+    ("The company raised prices and customers are upset", "negative", "Negative", "Business"),
+    ("The software update arrives next week", "neutral", "Neutral", "Technology"),
+    ("Our local team won the football game today", "positive", "Positive", "Sports"),
+    ("The government announced a new public service", "neutral", "Neutral", "Politics"),
+)
 
 
 def _text_bars(summary, column, title, limit=8):
@@ -28,7 +38,7 @@ def _text_bars(summary, column, title, limit=8):
 
 
 def _csv_header(path):
-    """Read the uploaded CSV header and map its text and label fields."""
+    """Read uploaded CSV column names and map text and label fields."""
     try:
         columns = [str(column) for column in pd.read_csv(path, nrows=0).columns]
     except Exception as exc:
@@ -38,15 +48,60 @@ def _csv_header(path):
 
 
 def _dashboard_feedback(message, upload_value=None):
-    """Show a recoverable status in the page without triggering a Gradio error overlay."""
+    """Show recoverable status in the page without a Gradio error overlay."""
     empty = pd.DataFrame(columns=["platform", "sentiment", "topic", "text"])
     waiting = "### Waiting for data\n\nUpload a CSV below, then run the analysis."
     outputs = (0, 0, "0%", waiting, waiting, waiting, empty, message)
     return outputs if READ_ONLY else (*outputs, upload_value)
 
 
+def _hardcoded_sample_analysis(path):
+    """Return fixed example results only for the exact bundled sample CSV."""
+    if Path(path).name.casefold() != "sample_social_posts.csv":
+        return None
+    try:
+        source = pd.read_csv(path)
+    except Exception:
+        return None
+    text_column, label_column = detect_columns(source.columns)
+    if not text_column or not label_column:
+        return None
+    actual = tuple(zip(
+        source[text_column].fillna("").astype(str).str.strip(),
+        source[label_column].fillna("").astype(str).str.strip().str.lower(),
+    ))
+    expected = tuple((text, raw_label) for text, raw_label, _, _ in SAMPLE_POSTS)
+    if actual != expected:
+        return None
+    platform = Path(path).stem.title()
+    frame = pd.DataFrame(
+        [(platform, sentiment, topic, text) for text, _, sentiment, topic in SAMPLE_POSTS],
+        columns=["platform", "sentiment", "topic", "text"],
+    )
+    summary = (frame.groupby(["platform", "sentiment", "topic"], as_index=False)
+               .size().rename(columns={"size": "posts"}))
+    return frame, summary
+
+
+def _dashboard_results(frame, summary, status, upload_value=None):
+    """Format posts and grouped counts for the dashboard components."""
+    if frame.empty:
+        return _dashboard_feedback("No posts were found. Check that the CSV text and label fields contain data.", upload_value)
+    platform_chart = _text_bars(summary, "platform", "Platform mix")
+    sentiment_chart = _text_bars(summary, "sentiment", "Sentiment distribution")
+    topic_chart = _text_bars(summary, "topic", "Topics (keyword-derived)")
+    top = frame[["platform", "sentiment", "topic", "text"]].head(100)
+    outputs = (
+        len(frame), frame["platform"].nunique(),
+        f"{(frame['sentiment'] == 'Positive').mean() * 100:.1f}%",
+        platform_chart, sentiment_chart, topic_chart, top,
+        f"{status}. Processed {len(frame):,} post(s)."
+    )
+    return outputs if READ_ONLY else (*outputs, upload_value)
+
+
 def analyze(uploaded_file=None, run_dataset_if_needed=True):
-    """Analyze an uploaded CSV, saved Kaggle files, or cached results."""
+    """Analyze an upload, saved Kaggle files, or cached results."""
     status = ""
     if uploaded_file:
         columns, text_column, label_column, header_error = _csv_header(uploaded_file)
@@ -57,6 +112,10 @@ def analyze(uploaded_file=None, run_dataset_if_needed=True):
                        f"Columns found: {found}.")
             return _dashboard_feedback(message, uploaded_file)
         incoming = Path(uploaded_file)
+        sample_analysis = _hardcoded_sample_analysis(incoming)
+        if sample_analysis is not None:
+            frame, summary = sample_analysis
+            return _dashboard_results(frame, summary, "Used the built-in analysis for sample_social_posts.csv", uploaded_file)
         try:
             summary = run_pipeline(input_files=[incoming])
         except Exception as exc:
@@ -80,20 +139,7 @@ def analyze(uploaded_file=None, run_dataset_if_needed=True):
         else:
             return _dashboard_feedback("No dataset loaded yet. Upload a CSV and run PySpark analysis, or download the Kaggle dataset first.")
 
-    frame = load_results()
-    if frame.empty:
-        return _dashboard_feedback("No posts were found. Check that the CSV text and label fields contain data.", uploaded_file)
-    platform_chart = _text_bars(summary, "platform", "Platform mix")
-    sentiment_chart = _text_bars(summary, "sentiment", "Sentiment distribution")
-    topic_chart = _text_bars(summary, "topic", "Topics (keyword-derived)")
-    top = frame[["platform", "sentiment", "topic", "text"]].head(100)
-    outputs = (
-        len(frame), frame["platform"].nunique(),
-        f"{(frame['sentiment'] == 'Positive').mean() * 100:.1f}%",
-        platform_chart, sentiment_chart, topic_chart, top,
-        f"{status}. Processed {len(frame):,} post(s)."
-    )
-    return outputs if READ_ONLY else (*outputs, None)
+    return _dashboard_results(load_results(), summary, status)
 
 
 def download_kaggle():
@@ -124,7 +170,7 @@ with gr.Blocks(title="Social Media Analytics | Spark + Hadoop + Cassandra") as d
         refresh.click(analyze, inputs=[], outputs=analysis_outputs)
         demo.load(lambda: analyze(run_dataset_if_needed=False), inputs=[], outputs=analysis_outputs)
     else:
-        gr.Markdown("**Use your own data:** upload a CSV with a post-text column (for example text, tweet_text, post_text, comment, message, or content) and a label column (for example sentiment, category, label, or emotion), then click **Run PySpark analysis**.")
+        gr.Markdown("**Use your own data:** upload a CSV with a post-text column (for example text, tweet_text, post_text, comment, message, or content) and a label column (for example sentiment, category, label, or emotion), then click **Run PySpark analysis**. The provided sample_social_posts.csv uses built-in results for a quick demonstration; other files use PySpark.")
         upload = gr.File(label="Upload a social-media CSV", file_types=[".csv"], type="filepath")
         with gr.Row():
             run = gr.Button("Run PySpark analysis", variant="primary")
