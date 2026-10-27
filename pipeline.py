@@ -59,6 +59,9 @@ def _sentiment(value):
 
 def spark_session():
     """Create a conservative local Spark session for small hosted containers."""
+    os.environ.setdefault("SPARK_LOCAL_IP", os.getenv("SPARK_LOCAL_IP", "127.0.0.1"))
+    os.environ.setdefault("SPARK_LOCAL_HOSTNAME", os.getenv("SPARK_LOCAL_HOSTNAME", "localhost"))
+    os.environ.setdefault("JAVA_TOOL_OPTIONS", "-XX:ActiveProcessorCount=2")
     os.environ["PYSPARK_PYTHON"] = sys.executable
     os.environ["PYSPARK_DRIVER_PYTHON"] = sys.executable
     builder = (SparkSession.builder.appName("SocialMediaSentimentAnalysis")
