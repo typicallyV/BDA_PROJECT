@@ -1,3 +1,13 @@
+---
+title: Social Media Analytics
+emoji: 📊
+colorFrom: blue
+colorTo: green
+sdk: docker
+app_port: 7860
+short_description: Sentiment dashboard for Twitter and Reddit posts
+---
+
 # Social Media Analytics
 
 A Gradio dashboard built with PySpark for the Kaggle [Twitter and Reddit Sentimental Analysis dataset](https://www.kaggle.com/datasets/cosmos98/twitter-and-reddit-sentimental-analysis-dataset). The app analyzes roughly 200K labeled public posts and comments.
@@ -27,7 +37,7 @@ The Docker image runs the Gradio app and local Spark. Cassandra and HDFS are sep
 
 ## Deploy to Hugging Face Spaces
 
-This repository includes Docker Space metadata in this README. Create a Docker Space and connect/push this repository to it. Spaces supports Docker-based apps and exposes port 7860. The Space can run the dashboard and local Spark; persistent Cassandra/HDFS requires separately hosted endpoints and secrets. See the [Hugging Face Spaces documentation](https://huggingface.co/docs/hub/spaces) and [Docker Spaces setup](https://huggingface.co/docs/hub/spaces-sdks-docker).
+Create a new Space and choose **Docker** as its SDK. The required Space metadata is already at the top of this README, and the Dockerfile starts Gradio on port 7860. Clone the new Space repository, copy the project source files into it (do not copy `data/`, `output/`, `vendor/`, `.venv/`, or `hadoop_data/`), then commit and push. Hugging Face rebuilds the Docker image after each push. The app downloads the public dataset from its **Download Kaggle dataset** button; the hosted container runs Gradio and local Spark. Cassandra and HDFS are optional external services and are not started by this Docker image. Do not publish database credentials; add external service settings as Space secrets. See the [Hugging Face Spaces documentation](https://huggingface.co/docs/hub/spaces) and [Docker Spaces setup](https://huggingface.co/docs/hub/spaces-sdks-docker).
 
 ## Data and analysis notes
 

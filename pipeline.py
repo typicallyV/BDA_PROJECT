@@ -73,11 +73,14 @@ def run_pipeline():
             text_col = next((columns[_normalized(n)] for n in TEXT_NAMES if _normalized(n) in columns), None)
             label_col = next((columns[_normalized(n)] for n in LABEL_NAMES if _normalized(n) in columns), None)
             if not text_col or not label_col:
-                raise ValueError("Could not find text and sentiment columns in " + path.name + ". Columns: " + ", ".join(raw.columns))
+                print("Skipping CSV without supported text and sentiment columns:", path.name)
+                continue
             platform = "Reddit" if "reddit" in path.name.lower() else "Twitter" if "twitter" in path.name.lower() else path.stem.title()
             rows = raw.select(F.col(text_col).cast("string").alias("text"), F.col(label_col).cast("string").alias("raw_sentiment"))
             rows = rows.withColumn("platform", F.lit(platform))
             normalized.append(rows)
+        if not normalized:
+            raise ValueError("No CSV files with supported post-text and sentiment columns were found in " + str(DATA_DIR))
         data = normalized[0]
         for other in normalized[1:]:
             data = data.unionByName(other)

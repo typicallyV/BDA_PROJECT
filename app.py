@@ -42,11 +42,12 @@ def analyze(uploaded_file=None):
     sentiment_chart = px.bar(summary.groupby("sentiment", as_index=False)["posts"].sum(), x="sentiment", y="posts", color="sentiment", title="Sentiment distribution")
     topic_chart = px.bar(summary.groupby("topic", as_index=False)["posts"].sum(), x="topic", y="posts", color="topic", title="Most discussed topics")
     top = frame[["platform", "sentiment", "topic", "text"]].head(100)
-    return (
+    outputs = (
         len(frame), frame["platform"].nunique(),
         f"{(frame['sentiment'] == 'Positive').mean() * 100:.1f}%",
-        platform_chart, sentiment_chart, topic_chart, top, None
+        platform_chart, sentiment_chart, topic_chart, top
     )
+    return outputs if READ_ONLY else (*outputs, None)
 def download_kaggle():
     import subprocess, sys
     result = subprocess.run([sys.executable, str(BASE / "download_dataset.py")], cwd=str(BASE), capture_output=True, text=True)
@@ -72,6 +73,7 @@ with gr.Blocks(title="Social Media Analytics | Spark + Hadoop + Cassandra") as d
         gr.Markdown("Read-only public demo")
         refresh = gr.Button("Refresh dashboard", variant="primary")
         refresh.click(analyze, inputs=[], outputs=analysis_outputs)
+        demo.load(analyze, inputs=[], outputs=analysis_outputs)
     else:
         upload = gr.File(label="Optional: add a CSV", file_types=[".csv"], type="filepath")
         with gr.Row():
@@ -80,6 +82,7 @@ with gr.Blocks(title="Social Media Analytics | Spark + Hadoop + Cassandra") as d
         log = gr.Textbox(label="Download status", lines=3)
         run.click(analyze, inputs=[upload], outputs=analysis_outputs + [upload])
         fetch.click(download_kaggle, outputs=log)
+        demo.load(analyze, inputs=[], outputs=analysis_outputs + [upload])
 if __name__ == "__main__":
     demo.launch(server_name="0.0.0.0", server_port=7860, show_error=True, share=os.getenv("GRADIO_SHARE", "false").lower() == "true", theme=gr.themes.Soft())
 
