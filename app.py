@@ -23,21 +23,33 @@ def _is_supported_csv(path):
 
 
 def analyze(uploaded_file=None):
-    """Process social-media CSVs, or show the existing Kaggle analysis."""
+    """Analyze one uploaded CSV, saved Kaggle files, or cached results."""
+    status = ""
     if uploaded_file:
-        if _is_supported_csv(uploaded_file):
-            import shutil
-            incoming = Path(uploaded_file)
-            DATA_DIR.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(incoming, DATA_DIR / incoming.name)
-        else:
-            gr.Warning("That CSV is not a social-media dataset. Showing the existing Kaggle analysis instead.")
-            uploaded_file = None
+        if not _is_supported_csv(uploaded_file):
+            raise gr.Error("This CSV needs a post-text column (for example text or clean_text) and a sentiment column (for example category or sentiment).")
+        incoming = Path(uploaded_file)
+        summary = run_pipeline(input_files=[incoming])
+        status = f"Analyzed uploaded file: {incoming.name}"
+
     cached_posts = list((OUTPUT_DIR / "spark_posts").glob("part-*.csv"))
-    summary = run_pipeline() if uploaded_file or not cached_posts else load_summary()
+    if not uploaded_file:
+        source_files = list(DATA_DIR.glob("*.csv"))
+        if cached_posts:
+            summary = load_summary()
+            status = "Loaded the saved Spark analysis."
+        elif source_files:
+            summary = run_pipeline()
+            status = f"Analyzed {len(source_files)} CSV file(s) from the dataset folder."
+        else:
+            empty = pd.DataFrame(columns=["platform", "sentiment", "topic", "text"])
+            outputs = (0, 0, "0%", None, None, None, empty,
+                       "No dataset loaded yet. Upload a CSV below and click Run PySpark analysis, or download the Kaggle dataset first.")
+            return outputs if READ_ONLY else (*outputs, None)
+
     frame = load_results()
     if frame.empty:
-        raise gr.Error("No posts found. Keep the Kaggle CSVs in data/kaggle_social and rerun the analysis.")
+        raise gr.Error("No posts were found in that CSV. Check that its text and sentiment columns contain data.")
     platform_chart = px.bar(summary.groupby("platform", as_index=False)["posts"].sum(), x="platform", y="posts", color="platform", title="Posts by platform")
     sentiment_chart = px.bar(summary.groupby("sentiment", as_index=False)["posts"].sum(), x="sentiment", y="posts", color="sentiment", title="Sentiment distribution")
     topic_chart = px.bar(summary.groupby("topic", as_index=False)["posts"].sum(), x="topic", y="posts", color="topic", title="Most discussed topics")
@@ -45,7 +57,8 @@ def analyze(uploaded_file=None):
     outputs = (
         len(frame), frame["platform"].nunique(),
         f"{(frame['sentiment'] == 'Positive').mean() * 100:.1f}%",
-        platform_chart, sentiment_chart, topic_chart, top
+        platform_chart, sentiment_chart, topic_chart, top,
+        f"{status}. Processed {len(frame):,} post(s)."
     )
     return outputs if READ_ONLY else (*outputs, None)
 def download_kaggle():
@@ -68,14 +81,16 @@ with gr.Blocks(title="Social Media Analytics | Spark + Hadoop + Cassandra") as d
         sentiment_plot = gr.Plot(label="Sentiment")
     topic_plot = gr.Plot(label="Topics (keyword-derived)")
     posts = gr.Dataframe(label="Sample analyzed posts", interactive=False, wrap=True)
-    analysis_outputs = [total, platforms, positive, platform_plot, sentiment_plot, topic_plot, posts]
+    status = gr.Markdown("Upload a supported CSV to begin, or download the Kaggle dataset.")
+    analysis_outputs = [total, platforms, positive, platform_plot, sentiment_plot, topic_plot, posts, status]
     if READ_ONLY:
         gr.Markdown("Read-only public demo")
         refresh = gr.Button("Refresh dashboard", variant="primary")
         refresh.click(analyze, inputs=[], outputs=analysis_outputs)
         demo.load(analyze, inputs=[], outputs=analysis_outputs)
     else:
-        upload = gr.File(label="Optional: add a CSV", file_types=[".csv"], type="filepath")
+        gr.Markdown("**Use your own data:** upload a CSV with a post-text column (text, clean_text, comment, etc.) and a sentiment/label column (sentiment, category, label, etc.), then click **Run PySpark analysis**.")
+        upload = gr.File(label="Upload a social-media CSV", file_types=[".csv"], type="filepath")
         with gr.Row():
             run = gr.Button("Run PySpark analysis", variant="primary")
             fetch = gr.Button("Download Kaggle dataset")

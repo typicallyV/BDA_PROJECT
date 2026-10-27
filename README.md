@@ -33,7 +33,13 @@ docker run --rm -p 7860:7860 social-media-analytics
 
 Open http://localhost:7860, choose **Download Kaggle dataset**, then **Run PySpark analysis**. The downloader first fetches the public Kaggle archive directly; it falls back to Kaggle CLI credentials if Kaggle blocks the direct request.
 
+To analyze your own file, upload a CSV in the dashboard and click **Run PySpark analysis**. It must contain a post-text column such as `text`, `clean_text`, or `comment`, and a sentiment column such as `sentiment`, `category`, or `label`. The dashboard also opens without any dataset present, so the upload and download controls remain available.
+
 The Docker image runs the Gradio app and local Spark. Cassandra and HDFS are separate optional services; set `CASSANDRA_HOST`/`CASSANDRA_PORT` and `HDFS_URI` only when those services are reachable from the container. The Windows `START_HADOOP.cmd` setup is for local development and is not used by the hosted Docker image.
+
+## Deploy to Render
+
+Create a **Web Service** from the GitHub repository, select the **Docker** runtime, and leave **Root Directory** blank because the Dockerfile is in the repository root. Set the `PORT` environment variable to `7860`; the app binds to `0.0.0.0`. Render rebuilds when the connected branch receives a new commit. Its free web services can sleep when idle, and their local files are ephemeral, so upload or download the dataset again after a restart if needed.
 
 ## Deploy to Hugging Face Spaces
 

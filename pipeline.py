@@ -59,9 +59,9 @@ def spark_session():
     return builder.getOrCreate()
 
 
-def run_pipeline():
+def run_pipeline(input_files=None):
     """Normalize the two Kaggle CSVs, analyze with Spark, and persist outputs."""
-    files = sorted(DATA_DIR.glob("*.csv"))
+    files = [Path(path).resolve() for path in input_files] if input_files is not None else sorted(DATA_DIR.glob("*.csv"))
     if not files:
         raise FileNotFoundError("No Kaggle CSVs found under data/kaggle_social. Run download_dataset.py first.")
     spark = spark_session()
